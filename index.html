@@ -1266,13 +1266,62 @@ function deleteRecord(id) {
 }
 
 // ===== Audio (Web Speech API) =====
-function speakWord(word) {
+let speechVoice = null;        // 挑选的高质量英语语音
+let speechStartTimer = null;   // cancel 后延迟启动的定时器
+let currentUtterance = null;   // 保持引用，防止语音对象被 GC 回收导致吞音
+
+function refreshSpeechVoice() {
+  if (!('speechSynthesis' in window)) return;
+  const voices = speechSynthesis.getVoices();
+  if (!voices.length) return;
+  const en = voices.filter(v => /^en([-_]|$)/i.test(v.lang));
+  if (!en.length) { speechVoice = null; return; }
+  // 优先选用发音完整、自然的语音（覆盖 macOS / Chrome / Edge 常见引擎）
+  const prefer = ['Samantha', 'Daniel', 'Karen', 'Moira', 'Tessa', 'Google US English',
+                  'Google UK English Female', 'Microsoft Aria', 'Microsoft Jenny', 'Ava', 'Allison'];
+  for (const name of prefer) {
+    const hit = en.find(v => v.name.indexOf(name) !== -1);
+    if (hit) { speechVoice = hit; return; }
+  }
+  speechVoice = en.find(v => v.localService) || en[0];
+}
+if ('speechSynthesis' in window) {
+  refreshSpeechVoice();
+  speechSynthesis.onvoiceschanged = refreshSpeechVoice;
+  // 部分浏览器首次加载 voices 列表为空，轮询补拉
+  let voiceRetries = 0;
+  const voicePoll = setInterval(() => {
+    if (speechVoice || voiceRetries++ > 10) { clearInterval(voicePoll); return; }
+    refreshSpeechVoice();
+  }, 500);
+}
+
+function startUtterance(text, opts) {
+  opts = opts || {};
+  const u = new SpeechSynthesisUtterance(text);
+  if (speechVoice) { try { u.voice = speechVoice; } catch (e) {} }
+  u.lang = (speechVoice && speechVoice.lang) || 'en-US';
+  u.rate = opts.rate || parseFloat(document.getElementById('speechRate').value);
+  u.pitch = 1;
+  u.volume = 1;
+  currentUtterance = u;
+  if (opts.setup) opts.setup(u);
+  speechSynthesis.speak(u);
+}
+
+// cancel 后必须延迟一小段时间再 speak，否则新语音的开头会被吞掉
+function queueSpeak(text, opts) {
   if (!('speechSynthesis' in window)) { toast('浏览器不支持语音合成', 'error'); return; }
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(word);
-  u.lang = 'en-US';
-  u.rate = parseFloat(document.getElementById('speechRate').value);
-  speechSynthesis.speak(u);
+  if (speechStartTimer) clearTimeout(speechStartTimer);
+  speechStartTimer = setTimeout(() => {
+    if (!('speechSynthesis' in window)) return;
+    startUtterance(text, opts);
+  }, 150);
+}
+
+function speakWord(word) {
+  queueSpeak(word);
 }
 
 function playAllWords() {
@@ -1285,7 +1334,6 @@ function playAllWords() {
   document.getElementById('playAllBtn').style.display = 'none';
   document.getElementById('stopBtn').style.display = 'inline-block';
   renderTable();
-  const rate = parseFloat(document.getElementById('speechRate').value);
   const gap = parseInt(document.getElementById('speechGap').value);
   const repeat = parseInt(document.getElementById('speechRepeat').value);
   let idx = 0;
@@ -1296,14 +1344,25 @@ function playAllWords() {
     let count = 0;
     function speakOnce() {
       if (!isPlaying) return;
-      const u = new SpeechSynthesisUtterance(w.e);
-      u.lang = 'en-US'; u.rate = rate;
-      u.onend = () => {
-        count++;
-        if (count < repeat && isPlaying) { playTimer = setTimeout(speakOnce, 500); }
-        else if (isPlaying) { idx++; playTimer = setTimeout(next, gap); }
-      };
-      speechSynthesis.speak(u);
+      speechSynthesis.cancel();
+      if (speechStartTimer) clearTimeout(speechStartTimer);
+      speechStartTimer = setTimeout(() => {
+        if (!isPlaying) return;
+        let finished = false;
+        startUtterance(w.e, {
+          setup(u) {
+            const done = () => {
+              if (finished || !isPlaying) return;
+              finished = true;
+              count++;
+              if (count < repeat && isPlaying) { playTimer = setTimeout(speakOnce, 500); }
+              else if (isPlaying) { idx++; playTimer = setTimeout(next, gap); }
+            };
+            u.onend = done;
+            u.onerror = done;  // 播放出错时也继续，避免整条链卡死
+          }
+        });
+      }, 150);
     }
     speakOnce();
   }
@@ -1313,6 +1372,7 @@ function playAllWords() {
 function stopPlay() {
   isPlaying = false;
   if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+  if (speechStartTimer) { clearTimeout(speechStartTimer); speechStartTimer = null; }
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   document.getElementById('playAllBtn').style.display = 'inline-block';
   document.getElementById('stopBtn').style.display = 'none';
