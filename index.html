@@ -382,6 +382,8 @@ tbody tr:hover{background:#faf9ff}
             <div class="sep" data-page-node-id="IGZq2MjNhpRFDlpGbTKZyy"></div>
             <label data-page-node-id="pwhPPITOxHARNqs5xfZznn">语速</label>
             <input type="range" id="speechRate" min="0.5" max="2" step="0.1" value="0.9" style="width:80px" data-page-node-id="xcXVBiJLtom1jOCY9jvyfL">
+            <label data-page-node-id="pwhPPITOxHARNqs5xfZznn">语音</label>
+            <select id="voiceSelect" onchange="onVoiceChange()" style="max-width:200px"></select>
             <label data-page-node-id="FhwKDJwci2mRplelxiFjmu">间隔</label>
             <select id="speechGap" data-page-node-id="OQANxDLPNJnBMDZRCEFMY5"><option value="1000" data-page-node-id="eFbJcmzYCz3jCdeTd0ZeoL">1秒</option><option value="2000" selected data-page-node-id="VDw6v98WhMByLFT9VbJfH0">2秒</option><option value="3000" data-page-node-id="MzQuPt2QfiEBxEkyjrH8kX">3秒</option><option value="5000" data-page-node-id="T1j0YinmdNg2YmlRaHwjvM">5秒</option></select>
             <label data-page-node-id="J0x7X9YDanyxrtqGoKt62b">重复</label>
@@ -1276,24 +1278,68 @@ function refreshSpeechVoice() {
   if (!voices.length) return;
   const en = voices.filter(v => /^en([-_]|$)/i.test(v.lang));
   if (!en.length) { speechVoice = null; return; }
-  // 优先选用发音完整、自然的语音（覆盖 macOS / Chrome / Edge 常见引擎）
-  const prefer = ['Samantha', 'Daniel', 'Karen', 'Moira', 'Tessa', 'Google US English',
-                  'Google UK English Female', 'Microsoft Aria', 'Microsoft Jenny', 'Ava', 'Allison'];
+  // 1. 用户手动选择的语音优先（持久化保存）
+  const savedUri = localStorage.getItem('dict_voice');
+  if (savedUri) {
+    const saved = en.find(v => v.voiceURI === savedUri) || voices.find(v => v.voiceURI === savedUri);
+    if (saved) { speechVoice = saved; return; }
+  }
+  // 2. 优先选高质量语音：macOS 的 Premium/Enhanced 声音明显更清晰（鼻音轻）
+  const premium = en.find(v => /premium/i.test(v.name));
+  if (premium) { speechVoice = premium; return; }
+  const enhanced = en.find(v => /enhanced/i.test(v.name));
+  if (enhanced) { speechVoice = enhanced; return; }
+  // 3. 再按常见清晰语音的优先级挑选
+  const prefer = ['Google US English', 'Microsoft Aria', 'Microsoft Jenny', 'Samantha',
+                  'Daniel', 'Karen', 'Tessa', 'Moira', 'Ava', 'Allison'];
   for (const name of prefer) {
     const hit = en.find(v => v.name.indexOf(name) !== -1);
     if (hit) { speechVoice = hit; return; }
   }
   speechVoice = en.find(v => v.localService) || en[0];
 }
+
+function populateVoiceSelect() {
+  if (!('speechSynthesis' in window)) return;
+  const sel = document.getElementById('voiceSelect');
+  if (!sel) return;
+  const voices = speechSynthesis.getVoices().filter(v => /^en([-_]|$)/i.test(v.lang));
+  if (!voices.length) return;
+  const prev = sel.value;
+  const label = v => {
+    let tag = '';
+    if (/premium/i.test(v.name)) tag = ' ★高清';
+    else if (/enhanced/i.test(v.name)) tag = ' ✦加强';
+    return v.name + ' (' + v.lang + ')' + tag;
+  };
+  sel.innerHTML = voices.map(v => '<option value="' + escapeHtml(v.voiceURI) + '">' + escapeHtml(label(v)) + '</option>').join('');
+  const savedUri = localStorage.getItem('dict_voice');
+  if (savedUri && voices.some(v => v.voiceURI === savedUri)) sel.value = savedUri;
+  else if (speechVoice) sel.value = speechVoice.voiceURI;
+  else if (prev) sel.value = prev;
+}
+
+function onVoiceChange() {
+  const sel = document.getElementById('voiceSelect');
+  if (!sel || !sel.value) return;
+  localStorage.setItem('dict_voice', sel.value);
+  refreshSpeechVoice();
+  // 试读一句，方便当场对比音质
+  queueSpeak('This voice sample sounds clear.');
+}
+
 if ('speechSynthesis' in window) {
   refreshSpeechVoice();
-  speechSynthesis.onvoiceschanged = refreshSpeechVoice;
+  speechSynthesis.onvoiceschanged = () => { refreshSpeechVoice(); populateVoiceSelect(); };
   // 部分浏览器首次加载 voices 列表为空，轮询补拉
   let voiceRetries = 0;
   const voicePoll = setInterval(() => {
-    if (speechVoice || voiceRetries++ > 10) { clearInterval(voicePoll); return; }
+    if ((speechVoice && document.getElementById('voiceSelect') && document.getElementById('voiceSelect').options.length > 0) || voiceRetries++ > 10) { clearInterval(voicePoll); return; }
     refreshSpeechVoice();
+    populateVoiceSelect();
   }, 500);
+  // 初始也填一次（同步就绪的浏览器）
+  populateVoiceSelect();
 }
 
 function startUtterance(text, opts) {
