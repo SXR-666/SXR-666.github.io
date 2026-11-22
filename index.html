@@ -90,6 +90,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Micr
 .tool-btn.success{border-color:var(--success);color:var(--success)}
 .tool-btn.success:hover{background:var(--success);color:#fff}
 .tool-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.tool-btn.primary{border-color:var(--primary);color:var(--primary);font-weight:600}
+.tool-btn.primary:hover{background:var(--primary);color:#fff}
 table{width:100%;border-collapse:collapse}
 thead{background:#f5f3ff}
 th{padding:10px 8px;font-size:13px;font-weight:600;color:#555;text-align:center;border-bottom:2px solid var(--border)}
@@ -372,7 +374,8 @@ tbody tr:hover{background:#faf9ff}
               <button class="tool-btn success" onclick="saveAndScore()" data-page-node-id="YMM3mUYxCI3yWoYjrRVWqj">保存并打分</button>
               <button class="tool-btn" onclick="toggleAnswer()" id="answerBtn" data-page-node-id="tGb4m6T1FqBHclT86d55GF">显示答案</button>
               <button class="tool-btn" onclick="generate()" data-page-node-id="1SnLKCoPxUBBFF9Sj8jKlx">重新抽取</button>
-              <button class="tool-btn" onclick="window.print()" data-page-node-id="5wb1j76zq4Mz4HJ5GLP7NH">🖨️ 打印 / 导出PDF</button>
+              <button class="tool-btn primary" onclick="exportSheetPDF()" title="直接生成 PDF，不含网址/日期等浏览器页眉页脚" id="exportPdfBtn">📄 导出PDF（无水印）</button>
+              <button class="tool-btn" onclick="window.print()" title="调用浏览器打印，会带上网址与日期页眉页脚；要干净版请用「导出PDF（无水印）」" data-page-node-id="5wb1j76zq4Mz4HJ5GLP7NH">🖨️ 打印</button>
               <button class="tool-btn danger" onclick="clearTable()" data-page-node-id="2BS1N4JKFfPalBRFS0LXrU">清空</button>
             </div>
           </div>
@@ -719,6 +722,313 @@ function importData() {
     reader.readAsText(file);
   };
   input.click();
+}
+
+// ===== 无水印 PDF 导出：Canvas 自绘 + 手写 PDF，绕开浏览器打印（无日期/网址/页码页眉页脚）=====
+var PDF_PAGE = { W: 794, H: 1123, M: 34, DPR: 2.6 };
+var PDF_FONT = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",Arial,sans-serif';
+
+function sheetPdfData() {
+  var modeText = currentMode === 'cn2en' ? '看中文写英文' : '看英文写中文';
+  var sel = document.getElementById('colCount');
+  var colCount = sel ? (parseInt(sel.value) || 3) : 3;
+  var N = currentWords.length;
+  var perCol = Math.ceil(N / colCount);
+  var cols = [];
+  for (var c = 0; c < colCount; c++) cols.push(currentWords.slice(c * perCol, (c + 1) * perCol));
+  var d = new Date();
+  return {
+    s: document.getElementById('unitStart').value,
+    e: document.getElementById('unitEnd').value,
+    N: N, colCount: colCount, perCol: perCol, cols: cols,
+    modeText: modeText,
+    listenLabel: listeningMode ? '听音写词' : (currentMode === 'cn2en' ? '中文' : '英文'),
+    answerLabel: listeningMode ? '默写区' : (currentMode === 'cn2en' ? '英文' : '中文'),
+    studentName: currentStudent ? currentStudent.name : '',
+    className: currentClass ? currentClass.name : '',
+    bookName: currentBook ? currentBook.name : '',
+    dateStr: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+  };
+}
+
+function pdfWrap(ctx, text, maxW) {
+  var out = [];
+  String(text == null ? '' : text).split('\n').forEach(function (para) {
+    var line = '';
+    for (var i = 0; i < para.length; i++) {
+      var t = line + para[i];
+      if (ctx.measureText(t).width > maxW && line) { out.push(line); line = para[i]; }
+      else line = t;
+    }
+    out.push(line);
+  });
+  return out.length ? out : [''];
+}
+
+function drawSheetPages(data) {
+  var W = PDF_PAGE.W, H = PDF_PAGE.H, M = PDF_PAGE.M, DPR = PDF_PAGE.DPR;
+  var gap = 10;
+  var cw = (W - 2 * M - gap * (data.colCount - 1)) / data.colCount;
+  var idxW = 20;
+  var ansW = Math.round(cw * 0.44);
+  var qW = cw - idxW - ansW;
+  var maxY = H - M - 18;
+  var canvii = [];
+  var startRow = 0, pageNo = 1;
+
+  while (startRow < data.perCol) {
+    var cv = document.createElement('canvas');
+    cv.width = Math.round(W * DPR);
+    cv.height = Math.round(H * DPR);
+    var ctx = cv.getContext('2d');
+    ctx.scale(DPR, DPR);
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+
+    // ---- 顶部信息 ----
+    var y = M;
+    ctx.fillStyle = '#1a1d26';
+    ctx.font = '600 12px ' + PDF_FONT;
+    var x = M;
+    ctx.fillText('姓名：', x, y + 6);
+    x += ctx.measureText('姓名：').width;
+    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(x, y + 13); ctx.lineTo(x + 96, y + 13); ctx.stroke();
+    x += 106;
+    if (data.className) {
+      ctx.fillText('班级：', x, y + 6);
+      x += ctx.measureText('班级：').width;
+      ctx.beginPath(); ctx.moveTo(x, y + 13); ctx.lineTo(x + 86, y + 13); ctx.stroke();
+      x += 96;
+    }
+    ctx.fillText('日期：', x, y + 6);
+    x += ctx.measureText('日期：').width;
+    ctx.font = '12px ' + PDF_FONT;
+    ctx.fillText(data.dateStr, x + 2, y + 6);
+
+    y += 22;
+    ctx.font = '10px ' + PDF_FONT;
+    ctx.fillStyle = '#6b7280';
+    ctx.fillText('课程：' + data.bookName + ' · 第' + data.s + '-' + data.e + '单元', M, y + 4);
+    ctx.fillText('单词数：' + data.N, M + 210, y + 4);
+    ctx.fillText('模式：' + data.modeText + (listeningMode ? '（听音）' : ''), M + 292, y + 4);
+    if (pageNo > 1) {
+      ctx.textAlign = 'right';
+      ctx.fillText('（续）', W - M, y + 4);
+      ctx.textAlign = 'left';
+    }
+    y += 12;
+    ctx.strokeStyle = '#333333'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(M, y); ctx.lineTo(W - M, y); ctx.stroke();
+
+    var tableTop = y + 10;
+
+    // ---- 计算本页行高 ----
+    var rowHeights = [];
+    var cursor = tableTop;
+    for (var r = startRow; r < data.perCol; r++) {
+      var h = 26;
+      for (var c = 0; c < data.colCount; c++) {
+        var wd = data.cols[c][r];
+        if (!wd) continue;
+        var txt = listeningMode ? '' : (currentMode === 'cn2en' ? (wd.c || '') : (wd.e || ''));
+        ctx.font = '9.5px ' + PDF_FONT;
+        var lines = txt ? pdfWrap(ctx, txt, qW - 8) : [''];
+        h = Math.max(h, Math.min(lines.length, 4) * 12 + 12);
+      }
+      if (cursor + h > maxY) break;
+      rowHeights.push(h);
+      cursor += h;
+    }
+    var rowsOnPage = rowHeights.length;
+    if (rowsOnPage === 0) { rowHeights.push(26); rowsOnPage = 1; }
+
+    // ---- 逐列绘制 ----
+    var headH = 20;
+    for (var ci = 0; ci < data.colCount; ci++) {
+      var colWords = data.cols[ci];
+      if (!colWords || colWords.length === 0) continue;
+      var x0 = M + ci * (cw + gap);
+      var yTop = tableTop;
+
+      // 表头
+      ctx.fillStyle = '#eef2f7';
+      ctx.fillRect(x0, yTop, cw, headH);
+      ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 0.7;
+      ctx.strokeRect(x0, yTop, cw, headH);
+      ctx.fillStyle = '#334155';
+      ctx.font = '600 9.5px ' + PDF_FONT;
+      ctx.textAlign = 'center';
+      ctx.fillText('#', x0 + idxW / 2, yTop + headH / 2);
+      ctx.fillText(data.listenLabel, x0 + idxW + qW / 2, yTop + headH / 2);
+      ctx.fillText(data.answerLabel, x0 + idxW + qW + ansW / 2, yTop + headH / 2);
+      ctx.textAlign = 'left';
+      yTop += headH;
+
+      for (var k = 0; k < rowsOnPage; k++) {
+        if (startRow + k >= colWords.length) break;
+        var hh = rowHeights[k] || 26;
+        var word = colWords[startRow + k];
+        var idxNo = startRow + k + 1;
+
+        ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 0.7;
+        ctx.strokeRect(x0, yTop, cw, hh);
+        ctx.beginPath();
+        ctx.moveTo(x0 + idxW, yTop); ctx.lineTo(x0 + idxW, yTop + hh);
+        ctx.moveTo(x0 + idxW + qW, yTop); ctx.lineTo(x0 + idxW + qW, yTop + hh);
+        ctx.stroke();
+
+        // 序号
+        ctx.fillStyle = '#64748b';
+        ctx.font = '9px ' + PDF_FONT;
+        ctx.textAlign = 'center';
+        ctx.fillText(String(idxNo), x0 + idxW / 2, yTop + hh / 2);
+        ctx.textAlign = 'left';
+
+        // 题目
+        var qText = listeningMode ? '' : (currentMode === 'cn2en' ? (word.c || '') : (word.e || ''));
+        if (qText) {
+          ctx.fillStyle = '#1f2937';
+          ctx.font = '9.5px ' + PDF_FONT;
+          var qLines = pdfWrap(ctx, qText, qW - 8).slice(0, 4);
+          var qy = yTop + hh / 2 - ((qLines.length - 1) * 12) / 2;
+          for (var qi = 0; qi < qLines.length; qi++) {
+            ctx.fillText(qLines[qi], x0 + idxW + 4, qy);
+            qy += 12;
+          }
+        }
+
+        // 答题区
+        if (showAnswer) {
+          ctx.fillStyle = '#1f2937';
+          ctx.font = '9.5px ' + PDF_FONT;
+          var aText = listeningMode ? (word.e + ' / ' + word.c) : (currentMode === 'cn2en' ? (word.e || '') : (word.c || ''));
+          var aLines = pdfWrap(ctx, aText, ansW - 8).slice(0, 4);
+          var ay = yTop + hh / 2 - ((aLines.length - 1) * 12) / 2;
+          for (var ai = 0; ai < aLines.length; ai++) {
+            ctx.fillText(aLines[ai], x0 + idxW + qW + 4, ay);
+            ay += 12;
+          }
+        } else {
+          ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 0.7;
+          ctx.beginPath();
+          ctx.moveTo(x0 + idxW + qW + 4, yTop + hh - 6);
+          ctx.lineTo(x0 + cw - 4, yTop + hh - 6);
+          ctx.stroke();
+        }
+
+        yTop += hh;
+      }
+    }
+
+    // 页码
+    ctx.fillStyle = '#9ca3af';
+    ctx.font = '8.5px ' + PDF_FONT;
+    ctx.textAlign = 'center';
+    ctx.fillText('第 ' + pageNo + ' 页', W / 2, H - M + 3);
+    ctx.textAlign = 'left';
+
+    canvii.push(cv);
+    startRow += rowsOnPage;
+    pageNo++;
+  }
+  return canvii;
+}
+
+function pdfFromCanvases(canvases) {
+  var A4W = 595.28, A4H = 841.89;
+  var imgs = canvases.map(function (cv) {
+    var b64 = cv.toDataURL('image/jpeg', 0.9).split(',')[1];
+    var bin = atob(b64);
+    var u8 = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return { data: u8, w: cv.width, h: cv.height };
+  });
+
+  var parts = [], pos = 0, offsets = {};
+  function put(u8) { parts.push(u8); pos += u8.length; }
+  function puts(s) {
+    var u8 = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i) & 0xff;
+    put(u8);
+  }
+  function beginObj(n) { offsets[n] = pos; puts(n + ' 0 obj\n'); }
+  function endObj() { puts('endobj\n'); }
+
+  puts('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+
+  beginObj(1);
+  puts('<</Type/Catalog/Pages 2 0 R>>\n');
+  endObj();
+
+  var kids = [];
+  for (var i = 0; i < imgs.length; i++) kids.push((3 + i * 3) + ' 0 R');
+  beginObj(2);
+  puts('<</Type/Pages/Kids[' + kids.join(' ') + ']/Count ' + imgs.length + '>>\n');
+  endObj();
+
+  for (var p = 0; p < imgs.length; p++) {
+    var pno = 3 + p * 3, ino = 4 + p * 3, cno = 5 + p * 3;
+    var im = imgs[p];
+
+    beginObj(pno);
+    puts('<</Type/Page/Parent 2 0 R/MediaBox[0 0 ' + A4W + ' ' + A4H + ']/Resources<</XObject<</Im0 ' + ino + ' 0 R>>/ProcSet[/PDF/ImageC]>>/Contents ' + cno + ' 0 R>>\n');
+    endObj();
+
+    beginObj(ino);
+    puts('<</Type/XObject/Subtype/Image/Width ' + im.w + '/Height ' + im.h + '/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode/Length ' + im.data.length + '>>\nstream\n');
+    put(im.data);
+    puts('\nendstream\n');
+    endObj();
+
+    var cs = 'q\n' + A4W + ' 0 0 ' + A4H + ' 0 0 cm\n/Im0 Do\nQ\n';
+    beginObj(cno);
+    puts('<</Length ' + cs.length + '>>\nstream\n' + cs + 'endstream\n');
+    endObj();
+  }
+
+  var maxObj = 3 + (imgs.length - 1) * 3 + 2;
+  var xrefPos = pos;
+  puts('xref\n0 ' + (maxObj + 1) + '\n');
+  puts('0000000000 65535 f \n');
+  for (var n = 1; n <= maxObj; n++) {
+    puts(String(offsets[n] || 0).padStart(10, '0') + ' 00000 n \n');
+  }
+  puts('trailer\n<</Size ' + (maxObj + 1) + '/Root 1 0 R>>\nstartxref\n' + xrefPos + '\n%%EOF\n');
+
+  var total = 0;
+  for (var q = 0; q < parts.length; q++) total += parts[q].length;
+  var out = new Uint8Array(total);
+  var off = 0;
+  for (var r = 0; r < parts.length; r++) { out.set(parts[r], off); off += parts[r].length; }
+  return out;
+}
+
+function exportSheetPDF() {
+  if (!currentWords || currentWords.length === 0) { toast('请先生成默写表', 'error'); return; }
+  toast('正在生成 PDF…');
+  setTimeout(function () {
+    try {
+      var data = sheetPdfData();
+      var pages = drawSheetPages(data);
+      var bytes = pdfFromCanvases(pages);
+      var name = '默写表_' + (data.studentName || '班级') + '_' + data.bookName + '_第' + data.s + '-' + data.e + '单元_' + data.dateStr + '.pdf';
+      name = name.replace(/[\\\/:*?"<>|]/g, '-');
+      var blob = new Blob([bytes], { type: 'application/pdf' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 6000);
+      toast('已导出 ' + pages.length + ' 页 PDF（无水印）', 'success');
+    } catch (err) {
+      console.error(err);
+      toast('导出失败：' + err.message, 'error');
+    }
+  }, 50);
 }
 
 function enterApp() {
