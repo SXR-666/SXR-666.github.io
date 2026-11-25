@@ -770,7 +770,7 @@ function drawSheetPages(data) {
   var gap = 10;
   var cw = (W - 2 * M - gap * (data.colCount - 1)) / data.colCount;
   var idxW = 20;
-  var ansW = Math.round(cw * 0.44);
+  var ansW = Math.round(cw * 0.48);
   var qW = cw - idxW - ansW;
   var maxY = H - M - 18;
   var canvii = [];
@@ -834,7 +834,7 @@ function drawSheetPages(data) {
         var wd = data.cols[c][r];
         if (!wd) continue;
         var txt = listeningMode ? '' : (currentMode === 'cn2en' ? (wd.c || '') : (wd.e || ''));
-        ctx.font = '9.5px ' + PDF_FONT;
+        ctx.font = fs + 'px ' + PDF_FONT;
         var lines = txt ? pdfWrap(ctx, txt, qW - 8) : [''];
         h = Math.max(h, Math.min(lines.length, 4) * 12 + 12);
       }
@@ -844,6 +844,15 @@ function drawSheetPages(data) {
     }
     var rowsOnPage = rowHeights.length;
     if (rowsOnPage === 0) { rowHeights.push(26); rowsOnPage = 1; }
+    // 自适应铺满：剩余空间充足时按比例放大行高与字号（平板书写更舒适）
+    var usedH = 0;
+    for (var uh = 0; uh < rowHeights.length; uh++) usedH += rowHeights[uh];
+    var availH = maxY - tableTop;
+    var scale = availH / usedH;
+    if (!(scale > 1)) scale = 1;
+    if (scale > 1) { for (var sh = 0; sh < rowHeights.length; sh++) rowHeights[sh] *= scale; }
+    var fs = Math.min(9.5 * scale, 15);
+    var lh = Math.round(12 * (fs / 9.5));
 
     // ---- 逐列绘制 ----
     var headH = 20;
@@ -859,7 +868,7 @@ function drawSheetPages(data) {
       ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 0.7;
       ctx.strokeRect(x0, yTop, cw, headH);
       ctx.fillStyle = '#334155';
-      ctx.font = '600 9.5px ' + PDF_FONT;
+      ctx.font = '600 ' + fs + 'px ' + PDF_FONT;
       ctx.textAlign = 'center';
       ctx.fillText('#', x0 + idxW / 2, yTop + headH / 2);
       ctx.fillText(data.listenLabel, x0 + idxW + qW / 2, yTop + headH / 2);
@@ -882,7 +891,7 @@ function drawSheetPages(data) {
 
         // 序号
         ctx.fillStyle = '#64748b';
-        ctx.font = '9px ' + PDF_FONT;
+        ctx.font = Math.max(9, fs - 0.5) + 'px ' + PDF_FONT;
         ctx.textAlign = 'center';
         ctx.fillText(String(idxNo), x0 + idxW / 2, yTop + hh / 2);
         ctx.textAlign = 'left';
@@ -891,25 +900,25 @@ function drawSheetPages(data) {
         var qText = listeningMode ? '' : (currentMode === 'cn2en' ? (word.c || '') : (word.e || ''));
         if (qText) {
           ctx.fillStyle = '#1f2937';
-          ctx.font = '9.5px ' + PDF_FONT;
+          ctx.font = fs + 'px ' + PDF_FONT;
           var qLines = pdfWrap(ctx, qText, qW - 8).slice(0, 4);
-          var qy = yTop + hh / 2 - ((qLines.length - 1) * 12) / 2;
+          var qy = yTop + hh / 2 - ((qLines.length - 1) * lh) / 2;
           for (var qi = 0; qi < qLines.length; qi++) {
             ctx.fillText(qLines[qi], x0 + idxW + 4, qy);
-            qy += 12;
+            qy += lh;
           }
         }
 
         // 答题区
         if (showAnswer) {
           ctx.fillStyle = '#1f2937';
-          ctx.font = '9.5px ' + PDF_FONT;
+          ctx.font = fs + 'px ' + PDF_FONT;
           var aText = listeningMode ? (word.e + ' / ' + word.c) : (currentMode === 'cn2en' ? (word.e || '') : (word.c || ''));
           var aLines = pdfWrap(ctx, aText, ansW - 8).slice(0, 4);
-          var ay = yTop + hh / 2 - ((aLines.length - 1) * 12) / 2;
+          var ay = yTop + hh / 2 - ((aLines.length - 1) * lh) / 2;
           for (var ai = 0; ai < aLines.length; ai++) {
             ctx.fillText(aLines[ai], x0 + idxW + qW + 4, ay);
-            ay += 12;
+            ay += lh;
           }
         } else {
           ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 0.7;
