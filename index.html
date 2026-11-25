@@ -871,7 +871,7 @@ function drawSheetPages(data) {
         if (startRow + k >= colWords.length) break;
         var hh = rowHeights[k] || 26;
         var word = colWords[startRow + k];
-        var idxNo = startRow + k + 1;
+        var idxNo = ci * data.perCol + startRow + k + 1;
 
         ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 0.7;
         ctx.strokeRect(x0, yTop, cw, hh);
